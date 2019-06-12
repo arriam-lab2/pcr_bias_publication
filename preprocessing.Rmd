@@ -1,0 +1,158 @@
+---
+title: "Data preprocessing"
+output: html_notebook
+---
+
+```{r message=FALSE, warning=FALSE}
+library(dada2)
+library(phyloseq)
+library(DECIPHER)
+library(dplyr)
+library(plyr)
+
+set.seed(139)
+
+n.threads=20
+```
+
+Parse metadata and specify sample files
+
+```{r}
+meta <- read.csv('metadata.tsv', sep='\t')
+
+root.raw <- 'noprimer'
+forward.raw <- file.path(root.raw, paste(meta$sample, 'R1.fastq.gz', sep='_'))
+reverse.raw <- file.path(root.raw, paste(meta$sample, 'R2.fastq.gz', sep='_'))
+
+root.qc = 'qc'
+forward.qc <- file.path(root.qc, paste(meta$sample, 'R1.fastq.gz', sep='_'))
+reverse.qc <- file.path(root.qc, paste(meta$sample, 'R2.fastq.gz', sep='_'))
+
+```
+
+Inspect quality.
+
+Forward reads
+
+```{r}
+plotQualityProfile(forward.raw, aggregate=TRUE, n=100000)
+```
+
+Reverse reads
+
+```{r}
+plotQualityProfile(reverse.raw, aggregate=TRUE, n=100000)
+```
+
+Group samples by cycle
+
+```{r}
+data <- data.frame(
+    sample=as.character(meta$sample),
+    forward.raw=forward.raw,
+    reverse.raw=reverse.raw,
+    forward.qc=forward.qc,
+    reverse.qc=reverse.qc,
+    sample.group=meta$cycle,
+    stringsAsFactors=FALSE
+)
+
+sample.groups <- lapply(unique(data$sample.group), function(sgroup) filter(data, sample.group == sgroup))
+```
+
+Run DADA with pseudo-pooling within sample groups
+
+```{r}
+get.n <- function(x) sum(getUniques(x))
+
+run.dada <- function(data, trim.left, n.threads, verbose, ...){
+    #' @param data a dataframe containing the following fields: samples, forward.raw, reverse.raw, forward.qc, reverse.qc,
+    #' @param ... passed to filterAndTrim
+    qc.out <- filterAndTrim(
+        data$forward.raw, data$forward.qc, 
+        data$reverse.raw, data$reverse.qc, 
+        compress=TRUE, multithread=n.threads,
+        verbose=verbose,
+        ...
+    ) %>% as.data.frame
+    if (verbose) {
+        print(qc.out)
+    }
+    forward.err <- learnErrors(data$forward.qc, multithread=n.threads, MAX_CONSIST=20)
+    reverse.err <- learnErrors(data$reverse.qc, multithread=n.threads, MAX_CONSIST=20)
+    forward.derep <- derepFastq(data$forward.qc, n=1e7, verbose=verbose)
+    reverse.derep <- derepFastq(data$reverse.qc, n=1e7, verbose=verbose)
+    # name derep-class objects by sample names
+    names(forward.derep) <- data$sample
+    names(reverse.derep) <- data$sample
+    forward.dada <- dada(forward.derep, err=forward.err, pool='pseudo', multithread=n.threads, verbose=verbose)
+    reverse.dada <- dada(reverse.derep, err=reverse.err, pool='pseudo', multithread=n.threads, verbose=verbose)
+    merged <- mergePairs(forward.dada, forward.derep, reverse.dada, reverse.derep, verbose=verbose)
+    sequence.table <- makeSequenceTable(merged)
+    sequence.table.nochim <- removeBimeraDenovo(
+        sequence.table, method="consensus", multithread=n.threads, verbose=verbose
+    )
+    row.names(sequence.table.nochim) <- data$sample
+    statistics <- data.frame(
+        raw=qc.out$reads.in, 
+        qc=qc.out$reads.out, 
+        denoised.fwd=sapply(forward.dada, get.n), 
+        denoised.rev=sapply(reverse.dada, get.n), 
+        merged=sapply(merged, get.n), 
+        nonchim=rowSums(sequence.table.nochim),
+        row.names=data$sample
+    )
+    list(stats=statistics, seq.table=sequence.table.nochim)
+}
+
+processed.groups <- lapply(sample.groups, run.dada, 
+                           trimLeft=c(0, 20), truncLen=c(200, 140), maxEE=c(3, 5),
+                           n.threads=n.threads, verbose=FALSE)
+
+statistics <- lapply(processed.groups, `[[`, 1) %>%
+    rbind.fill
+sequence.table <- lapply(processed.groups, `[[`, 2) %>%
+    (function(x) mergeSequenceTables(tables=x))
+```
+
+```{r}
+statistics
+```
+
+Extract sequences and sequence counts,
+
+```{r}
+# extract results
+seqs <- DNAStringSet(getSequences(sequence.table))
+seq.names <- paste0("seq", seq(length(seqs)))
+names(seqs) <- seq.names
+
+count.table <- otu_table(sequence.table, taxa_are_rows=FALSE) %>% t
+rownames(count.table) <- seq.names
+```
+
+Predict taxonomy
+```{r}
+classifier <- readRDS('classifier.RData')
+predicted.taxonomy <- IdTaxa(seqs, classifier, threshold=80, processors=n.threads)
+format.taxonomy <- function(id) paste(id$taxon, '(', round(id$confidence, digits=1), ')', sep='', collapse=';')
+tax.ids <- sapply(predicted.taxonomy, format.taxonomy)
+```
+
+Write results
+
+```{r}
+root.output = 'dada'
+dir.create(root.output, showWarnings=FALSE)
+
+write.table(statistics, file.path(root.output, 'stats.tsv'), sep='\t', quote=FALSE, col.names=NA)
+
+write.table(
+    as.data.frame(tax.ids, row.names=names(tax.ids)),
+    file.path(root.output, 'taxonomy.tsv'), sep='\t', quote=FALSE, col.names=FALSE
+)
+
+writeXStringSet(seqs, file.path(root.output, 'sequences.fna'))
+write.table(count.table, file.path(root.output, 'counts.tsv'), sep="\t", quote=FALSE, col.names=NA)
+
+```

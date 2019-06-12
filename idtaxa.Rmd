@@ -1,0 +1,65 @@
+---
+title: "Train an IdTaxa classifier"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r message=FALSE, warning=FALSE}
+library(DECIPHER)
+library(dplyr)
+library(docstring)  # enables Python-like docstring documentation
+
+set.seed(139)
+```
+
+```{r}
+# read reference sequences and make sure they have the same orientation
+trainset <- readDNAStringSet('taxonomy/trainset.fna.gz')
+```
+
+```{r}
+subsample.groups <- function(n, tax.ids) {
+    #' Subsample over-represented taxonomic groups
+    #' @param n max group size
+    #' @param tax.ids a vector of taxonomic identifiers
+    split(1:length(tax.ids), tax.ids) %>%
+        lapply(function(x) if (length(x) > n) sample(x, n, replace=FALSE) else x) %>%
+        unlist %>% 
+        unname
+}
+
+subsampled <- trainset[subsample.groups(10, names(trainset))]
+```
+
+```{r}
+train.idtaxa <- function(sequences, n.iterations, verbose=TRUE, ...) {
+    #' Train an IdTaxa classifier
+    #' @param sequences A DNAStringSet or an RNAStringSet of unaligned sequences
+    #' @param n.iterations The maximum number of training iterations
+    #' @param verbose Show training progress
+    #' @param ... Pass additinal arguments to the LearnTaxa function
+    if (verbose) {
+        cat(n.iterations, 'iterations left\n')
+    }
+    classifier <- LearnTaxa(sequences, names(sequences), NULL, verbose=verbose, ...)
+    if (verbose) {
+        print(classifier)
+    }
+    problematic <- classifier$problemSequences$Index
+    if (n.iterations == 1 || !length(problematic)) {
+        return(classifier)   
+    }
+    rm(classifier)
+    return(train.idtaxa(sequences[-problematic], n.iterations-1))
+}
+
+classifier <- train.idtaxa(subsampled, 3)
+plot(classifier)
+```
+
+```{r}
+saveRDS(training.set, 'taxonomy/classifier.RData')
+```
+
