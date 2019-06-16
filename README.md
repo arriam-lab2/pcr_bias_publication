@@ -1,11 +1,12 @@
-# Modelling and characterising multi-template PCR biases in 16S rRNA amplicon sequencing data.
+## Modelling and characterising multi-template PCR biases in 16S rRNA amplicon sequencing data.
 Source code and metadata required to reproduce the study
 
 ### Installing dependencies
 
 #TODO
 
-### Train taxonomy predictor
+### Train a taxonomic classifier
+
 - Download and preprocess SILVA release 132: `silva.ipynb`
 - Reduce redundancy in taxonomy groups
 ```
