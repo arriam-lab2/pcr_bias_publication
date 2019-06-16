@@ -35,7 +35,7 @@ rm -r taxonomy/groups
 
 - Remove primers
 
-You can use any other way to remove universal primers. We use our our tool: `primercut.py`. You can install it from https://github.com/arriam-lab2/biomisc.git to get primercut.py:
+You can use any other way to remove universal primers. We use our our tool: `primercut.py`. You can install it from https://github.com/arriam-lab2/biomisc :
 ```
 pip install --no-cache-dir git+https://github.com/arriam-lab2/biomisc.git
 ```
