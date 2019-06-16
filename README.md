@@ -1,9 +1,10 @@
 ## Modelling and characterising multi-template PCR biases in 16S rRNA amplicon sequencing data.
-Source code and metadata required to reproduce the study
+
+Source code, metadata and instructions required to reproduce the study. The instructions assume that you are running a Unix-like operating system (either GNU/Linux or macOS).
 
 ### Installing dependencies
 
-#TODO
+TODO
 
 ### Train a taxonomic classifier
 
